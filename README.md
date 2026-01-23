@@ -17,10 +17,10 @@ SilentStream is a powerful Windows application for audio noise suppression and r
 
 ## Installation & Usage
 
-### Recommended Installation (New)
-1. Download the latest **[SilentStream_Setup.exe](https://github.com/yyyutakaaa/SilentStream/releases/download/v.0.1.0/SilentStream_Setup.exe)** from the [Releases](https://github.com/yyyutakaaa/SilentStream/releases/tag/v.0.1.0) page.
+### Recommended Installation (Recommended)
+1. Download the latest **[SilentStream_Setup.zip](https://github.com/yyyutakaaa/SilentStream/releases/download/v1.0.0/SilentStream_Setup.zip)** from the [Releases](https://github.com/yyyutakaaa/SilentStream/releases/tag/v1.0.0) page.
 2. Run the installer to set up SilentStream on your system.
-3. **Note on Security:** As this is a new and unsigned application, Windows SmartScreen or other antivirus software may flag it as "unrecognized" or "unsafe". This is simply because the app hasn't built up a high download reputation yet. The application is completely virus-free and safe to use. You can click "More info" and "Run anyway" to proceed.
+3. **Note on Security:** As this is a new and unsigned application, Windows SmartScreen or other antivirus software may flag it as "unrecognized" or "unsafe". This is simply because the app hasn't built up a high download reputation yet. The application is completely virus-free and safe to use.
 
 ### Alternative Installation (Manual)
 1. Download the `SilentStream_Installer.zip`.
