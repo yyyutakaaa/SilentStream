@@ -1,0 +1,30 @@
+[package]
+name = "silent_stream"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+# GUI
+eframe = "0.26.0"
+tray-icon = "0.14"
+
+# Audio
+cpal = "0.15"
+rubato = "0.14"
+ringbuf = "0.3"
+nnnoiseless = "0.5"
+
+# System
+sysinfo = "0.30"
+winreg = "0.52"
+raw-window-handle = "0.6"
+windows-sys = { version = "0.52", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation"] }
+
+[profile.release]
+opt-level = "z"      # Optimize for size
+lto = true           # Enable Link Time Optimization
+codegen-units = 1    # Reduce parallel code generation units to increase optimization
+panic = "abort"      # Abort on panic (removes landing pads)
+strip = true         # Strip symbols from binary
