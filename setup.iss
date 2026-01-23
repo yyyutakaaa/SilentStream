@@ -2,9 +2,9 @@
 ; SEE THE DOCUMENTATION FOR DETAILS ON CREATING INNO SETUP SCRIPT FILES!
 
 #define MyAppName "SilentStream"
-#define MyAppVersion "0.1.0"
-#define MyAppPublisher "SilentStream Team"
-#define MyAppURL "https://github.com/SilentStream/SilentStream"
+#define MyAppVersion "1.0.0"
+#define MyAppPublisher "yyyutakaaa"
+#define MyAppURL "https://github.com/yyyutakaaa/SilentStream"
 #define MyAppExeName "silent_stream.exe"
 
 [Setup]
@@ -26,6 +26,8 @@ OutputBaseFilename=SilentStream_Setup
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile=app_icon.ico
+UninstallDisplayIcon={app}\{#MyAppExeName}
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -39,8 +41,8 @@ Source: "target\release\silent_stream.exe"; DestDir: "{app}"; Flags: ignoreversi
 ; NOTE: Don't use "Flags: ignoreversion" on any shared system files
 
 [Icons]
-Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\{#MyAppExeName}"
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon; IconFilename: "{app}\{#MyAppExeName}"
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
@@ -49,9 +51,11 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}
 // Function to check if VB-Audio Cable is installed
 function IsVBCableInstalled: Boolean;
 begin
-  // Check for the uninstaller registry key for VB-Audio Virtual Cable
-  Result := RegKeyExists(HKEY_LOCAL_MACHINE, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\VB-Audio Virtual Cable') or
-            RegKeyExists(HKEY_LOCAL_MACHINE_64, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\VB-Audio Virtual Cable');
+  // Check for various known registry keys for VB-Audio Virtual Cable
+  Result := RegKeyExists(HKEY_LOCAL_MACHINE, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\VB:VBCABLE {87459874-1236-4469}') or
+            RegKeyExists(HKEY_LOCAL_MACHINE_64, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\VB:VBCABLE {87459874-1236-4469}') or
+            RegKeyExists(HKEY_LOCAL_MACHINE, 'SOFTWARE\VB-Audio\Cable') or
+            RegKeyExists(HKEY_LOCAL_MACHINE_64, 'SOFTWARE\VB-Audio\Cable');
 end;
 
 // Setup event to check requirements
@@ -62,9 +66,9 @@ begin
   Result := True;
   if not IsVBCableInstalled then
   begin
-    if MsgBox('VB-Audio Virtual Cable driver was not found on your system.' + #13#10 +
-              'SilentStream requires this driver to function correctly.' + #13#10 + #13#10 +
-              'Do you want to go to the download page now?', mbConfirmation, MB_YESNO) = IDYES then
+    if MsgBox('Virtual Cable driver (VB-Cable) was not found on your system.' + #13#10 +
+              'SilentStream requires a virtual audio cable to function correctly.' + #13#10 + #13#10 +
+              'Do you want to open the download page now?', mbConfirmation, MB_YESNO) = IDYES then
     begin
        ShellExec('open', 'https://vb-audio.com/Cable/', '', '', SW_SHOW, EwNoWait, ErrCode);
     end;

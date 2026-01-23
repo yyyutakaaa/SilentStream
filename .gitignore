@@ -25,10 +25,16 @@ build_error.txt
 driver_output.txt
 cargo_output.txt
 
+# Generated Assets
+app_icon.ico
+icon_256.png
+
 # Distribution / Installer artifacts
 dist/
 Output/
 *.zip
+*.rar
+*.7z
 *.exe
 *.msi
 

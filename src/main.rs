@@ -114,6 +114,17 @@ struct SilentStreamApp {
     window_hwnd: std::sync::Arc<std::sync::Mutex<Option<isize>>>,
 }
 
+
+// Load Icon Helper
+fn load_app_icon() -> (Vec<u8>, u32, u32) {
+    let image = image::load_from_memory(include_bytes!("../icon_256.png"))
+        .expect("Failed to load icon")
+        .into_rgba8();
+    let (width, height) = image.dimensions();
+    let rgba = image.into_raw();
+    (rgba, width, height)
+}
+
 impl Default for SilentStreamApp {
     fn default() -> Self {
         let engine = AudioEngine::new();
@@ -144,18 +155,10 @@ impl Default for SilentStreamApp {
         let tray_open = MenuItem::new("Open SilentStream", true, None);
         let _ = tray_menu.append(&tray_open);
         
-        // Generate simple icon (32x32 blue-purple gradient)
-        let mut icon_rgba = Vec::with_capacity(32*32*4);
-        for y in 0..32 {
-            for x in 0..32 {
-                icon_rgba.push((x * 8) as u8); // R
-                icon_rgba.push((y * 8) as u8); // G
-                icon_rgba.push(255);           // B
-                icon_rgba.push(255);           // A
-            }
-        }
+        // Load icon for tray
+        let (icon_rgba, icon_width, icon_height) = load_app_icon();
         
-        if let Ok(icon) = tray_icon::Icon::from_rgba(icon_rgba, 32, 32) {
+        if let Ok(icon) = tray_icon::Icon::from_rgba(icon_rgba, icon_width, icon_height) {
              let _ = TrayIconBuilder::new()
                 .with_menu(Box::new(tray_menu))
                 .with_tooltip("SilentStream")
@@ -361,6 +364,7 @@ impl SilentStreamApp {
                 use std::io::Write;
                 if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open("tray_debug.log") {
                     let _ = writeln!(file, "{:?} - {}", std::time::SystemTime::now(), msg);
+                    let _ = file.flush();
                 }
             }
 
@@ -388,23 +392,38 @@ impl SilentStreamApp {
                     }
                     
                     if should_restore {
-                         log_to_file("Sending wakeup signal from BG thread...");
+                         log_to_file("Tray click detected, restoring window directly...");
 
-                         // 1. Set flag for main thread
-                         restore_flag.store(true, std::sync::atomic::Ordering::Relaxed);
-
-                         // 2. WAKE UP MAIN THREAD ONLY
-                         // Use PostMessage to bump the message loop potentially sleeping
+                         // Set flag for main thread (for state tracking)
+                         restore_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+                         
+                         // Directly restore window from background thread
+                         // We need to do this because the main thread event loop isn't running when window is hidden
                          if let Ok(guard) = hwnd_store.lock() {
                              if let Some(hwnd) = *guard {
-                                 unsafe {
-                                     windows_sys::Win32::UI::WindowsAndMessaging::PostMessageA(hwnd, 0, 0, 0);
-                                 }
+                                 log_to_file(&format!("Restoring HWND {:?} from BG thread", hwnd));
+                                 // Spawn a short-lived thread to call ShowWindow
+                                 // This avoids potential blocking issues
+                                 let hwnd_copy = hwnd;
+                                 std::thread::spawn(move || {
+                                     unsafe {
+                                         use windows_sys::Win32::UI::WindowsAndMessaging::*;
+                                         // First show the window
+                                         ShowWindow(hwnd_copy as isize, SW_SHOW as i32);
+                                         // Then restore it (in case it was minimized)
+                                         ShowWindow(hwnd_copy as isize, SW_RESTORE as i32);
+                                         // Bring to foreground
+                                         SetForegroundWindow(hwnd_copy as isize);
+                                     }
+                                 });
+                                 log_to_file("Spawned restore thread");
                              }
                          }
                          
-                         // 3. Request repaint via context
+                         // Request repaint
                          ctx_clone.request_repaint();
+                         
+                         log_to_file("Restore complete");
                     }
                     
                     std::thread::sleep(Duration::from_millis(50));
@@ -433,14 +452,17 @@ impl SilentStreamApp {
              if let Ok(guard) = self.window_hwnd.lock() {
                  if let Some(hwnd) = *guard {
                      if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open("tray_debug.log") {
-                         let _ = writeln!(file, "{:?} - Main thread: Calling ShowWindow(SW_SHOW) and SetForegroundWindow on HWND {:?}", std::time::SystemTime::now(), hwnd);
+                         let _ = writeln!(file, "{:?} - Main thread: Calling ShowWindow and SetForegroundWindow on HWND {:?}", std::time::SystemTime::now(), hwnd);
                      }
                      unsafe {
-                         // SW_SHOW = 5 (Activates the window and displays it in its current size and position)
-                         // SW_RESTORE = 9 (Restores a minimized window)
-                         // Since we might be Hidden (Visible: false), SW_SHOW is safer to ensure it appears.
-                         windows_sys::Win32::UI::WindowsAndMessaging::ShowWindow(hwnd as _, 5);
-                         windows_sys::Win32::UI::WindowsAndMessaging::SetForegroundWindow(hwnd as _);
+                         use windows_sys::Win32::UI::WindowsAndMessaging::*;
+                         // SW_RESTORE = 9: Restores a minimized or hidden window
+                         // SW_SHOWDEFAULT = 10: Uses default show state
+                         ShowWindow(hwnd as _, SW_RESTORE as i32);
+                         ShowWindow(hwnd as _, SW_SHOW as i32);
+                         SetForegroundWindow(hwnd as _);
+                         // Also bring window to top
+                         BringWindowToTop(hwnd as _);
                      }
                  } else {
                      if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open("tray_debug.log") {
@@ -556,10 +578,18 @@ impl eframe::App for SilentStreamApp {
                              // Custom Hide Button (Arrow to South-East)
                              let (rect, response) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::click());
                              
-                             // Handle interaction
+                             // Handle interaction - Minimize to tray
                              if response.clicked() {
                                 self.is_minimized_to_tray = true;
-                                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                                // Use SW_HIDE via Win32 to hide from taskbar while keeping event loop alive
+                                if let Ok(guard) = self.window_hwnd.lock() {
+                                    if let Some(hwnd) = *guard {
+                                        unsafe {
+                                            use windows_sys::Win32::UI::WindowsAndMessaging::*;
+                                            ShowWindow(hwnd as isize, SW_HIDE as i32);
+                                        }
+                                    }
+                                }
                              }
                              
                              // Paint button background
@@ -738,12 +768,20 @@ impl eframe::App for SilentStreamApp {
 }
 
 fn main() -> eframe::Result<()> {
+    let (icon_rgba, icon_width, icon_height) = load_app_icon();
+    let icon_data = egui::IconData {
+        rgba: icon_rgba,
+        width: icon_width,
+        height: icon_height,
+    };
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([360.0, 480.0])
             .with_resizable(false)
             .with_maximize_button(false)
-            .with_title("SilentStream"),
+            .with_title("SilentStream")
+            .with_icon(icon_data),
         ..Default::default()
     };
     
