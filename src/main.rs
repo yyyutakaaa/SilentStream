@@ -112,6 +112,8 @@ struct SilentStreamApp {
     tray_listener_started: bool,
     restore_requested: std::sync::Arc<std::sync::atomic::AtomicBool>,
     window_hwnd: std::sync::Arc<std::sync::Mutex<Option<isize>>>,
+    // Shared flag so tray listener thread knows whether app is in tray mode
+    in_tray_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 
@@ -196,6 +198,7 @@ impl Default for SilentStreamApp {
             tray_listener_started: false,
             restore_requested: restore_flag,
             window_hwnd: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            in_tray_flag: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 }
@@ -358,75 +361,46 @@ impl SilentStreamApp {
             let ctx_clone = ctx.clone();
             let restore_flag = self.restore_requested.clone();
             let hwnd_store = self.window_hwnd.clone();
-            
-            // Debug logger helper
-            fn log_to_file(msg: &str) {
-                use std::io::Write;
-                if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open("tray_debug.log") {
-                    let _ = writeln!(file, "{:?} - {}", std::time::SystemTime::now(), msg);
-                    let _ = file.flush();
-                }
-            }
+            let in_tray = self.in_tray_flag.clone();
 
-            log_to_file("Tray listener thread started");
-            
             std::thread::spawn(move || {
                 loop {
-                    let mut should_restore = false;
+                    let mut got_click = false;
 
-                    // Check Menu Events
-                    while let Ok(event) = MenuEvent::receiver().try_recv() {
-                         log_to_file(&format!("Menu event received in BG thread: {:?}", event));
-                         should_restore = true;
+                    // Drain all events (must always drain to avoid channel backup)
+                    while let Ok(_) = MenuEvent::receiver().try_recv() {
+                        got_click = true;
                     }
-
-                    // Check Tray Icon Events
                     while let Ok(event) = TrayIconEvent::receiver().try_recv() {
-                        match event {
-                            TrayIconEvent::Click { .. } => {
-                                log_to_file("Click detected! Requesting restore.");
-                                should_restore = true;
-                            },
-                            _ => {} // Ignore Move, etc.
+                        if let TrayIconEvent::Click { .. } = &event {
+                            got_click = true;
                         }
                     }
-                    
-                    if should_restore {
-                         log_to_file("Tray click detected, restoring window directly...");
 
-                         // Set flag for main thread (for state tracking)
+                    // Only restore if we're actually in tray mode
+                    if got_click && in_tray.load(std::sync::atomic::Ordering::SeqCst) {
+                         in_tray.store(false, std::sync::atomic::Ordering::SeqCst);
                          restore_flag.store(true, std::sync::atomic::Ordering::SeqCst);
-                         
-                         // Directly restore window from background thread
-                         // We need to do this because the main thread event loop isn't running when window is hidden
+
+                         // Restore window from background thread
                          if let Ok(guard) = hwnd_store.lock() {
                              if let Some(hwnd) = *guard {
-                                 log_to_file(&format!("Restoring HWND {:?} from BG thread", hwnd));
-                                 // Spawn a short-lived thread to call ShowWindow
-                                 // This avoids potential blocking issues
                                  let hwnd_copy = hwnd;
                                  std::thread::spawn(move || {
                                      unsafe {
                                          use windows_sys::Win32::UI::WindowsAndMessaging::*;
-                                         // First show the window
                                          ShowWindow(hwnd_copy as isize, SW_SHOW as i32);
-                                         // Then restore it (in case it was minimized)
                                          ShowWindow(hwnd_copy as isize, SW_RESTORE as i32);
-                                         // Bring to foreground
                                          SetForegroundWindow(hwnd_copy as isize);
                                      }
                                  });
-                                 log_to_file("Spawned restore thread");
                              }
                          }
-                         
-                         // Request repaint
+
                          ctx_clone.request_repaint();
-                         
-                         log_to_file("Restore complete");
                     }
-                    
-                    std::thread::sleep(Duration::from_millis(50));
+
+                    std::thread::sleep(Duration::from_millis(100));
                 }
             });
         }
@@ -434,39 +408,24 @@ impl SilentStreamApp {
     
     fn check_restore_request(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if self.restore_requested.load(std::sync::atomic::Ordering::Relaxed) {
-             use std::io::Write;
-             if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open("tray_debug.log") {
-                 let _ = writeln!(file, "{:?} - Main thread: Restore requested detected!", std::time::SystemTime::now());
-             }
-
              self.restore_requested.store(false, std::sync::atomic::Ordering::Relaxed);
              self.is_minimized_to_tray = false;
              self.last_restore_time = Some(Instant::now());
-             
-             // A. Egui restore commands
+
+             // Egui restore commands
              ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
              ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
              ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
 
-             // B. Force Win32 Restore (Now on Main Thread - SAFE)
+             // Force Win32 Restore
              if let Ok(guard) = self.window_hwnd.lock() {
                  if let Some(hwnd) = *guard {
-                     if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open("tray_debug.log") {
-                         let _ = writeln!(file, "{:?} - Main thread: Calling ShowWindow and SetForegroundWindow on HWND {:?}", std::time::SystemTime::now(), hwnd);
-                     }
                      unsafe {
                          use windows_sys::Win32::UI::WindowsAndMessaging::*;
-                         // SW_RESTORE = 9: Restores a minimized or hidden window
-                         // SW_SHOWDEFAULT = 10: Uses default show state
                          ShowWindow(hwnd as _, SW_RESTORE as i32);
                          ShowWindow(hwnd as _, SW_SHOW as i32);
                          SetForegroundWindow(hwnd as _);
-                         // Also bring window to top
                          BringWindowToTop(hwnd as _);
-                     }
-                 } else {
-                     if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open("tray_debug.log") {
-                         let _ = writeln!(file, "{:?} - Main thread: HWND is NONE!", std::time::SystemTime::now());
                      }
                  }
              }
@@ -489,33 +448,34 @@ impl eframe::App for SilentStreamApp {
              }
         }
 
-        self.apply_custom_theme(ctx);
+        // Tray listener must always run to handle restore clicks
         self.ensure_tray_listener(ctx);
         self.check_restore_request(ctx, frame);
 
-        // Handle minimize logic
-        // Check if minimized using input state
-        let minimized = ctx.input(|i| i.viewport().minimized.unwrap_or(false));
-         
-        // If we are back (not minimized), ensure flag is reset so we don't think we are still in tray
-        if !minimized && self.is_minimized_to_tray {
-             self.is_minimized_to_tray = false;
+        // When minimized to tray: skip ALL rendering and UI work.
+        // eframe 0.26 has a bug where request_repaint_after is ignored on Windows,
+        // so we also use ViewportCommand::Visible(false) to tell winit the window is hidden.
+        if self.is_minimized_to_tray {
+            return;
         }
-        
+
+        // --- Everything below only runs when window is visible ---
+
+        self.apply_custom_theme(ctx);
+
         if self.first_frame {
             self.first_frame = false;
             self.auto_start();
         }
-        
+
         self.update_cpu_usage();
-        
-        // Repaint for smooth animation AND to ensure tray polling happens
-        ctx.request_repaint_after(Duration::from_millis(16)); // ~60fps
+
+        // Repaint at ~60fps for smooth animation
+        ctx.request_repaint_after(Duration::from_millis(16));
 
         egui::CentralPanel::default()
             .frame(egui::Frame::none().inner_margin(16.0))
             .show(ctx, |ui| {
-                // Background animation
                 self.draw_animated_background(ui);
                 
                 // Push cursor down past the manual header
@@ -581,7 +541,10 @@ impl eframe::App for SilentStreamApp {
                              // Handle interaction - Minimize to tray
                              if response.clicked() {
                                 self.is_minimized_to_tray = true;
-                                // Use SW_HIDE via Win32 to hide from taskbar while keeping event loop alive
+                                self.in_tray_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+                                // Hide window: use both egui commands and Win32
+                                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
                                 if let Ok(guard) = self.window_hwnd.lock() {
                                     if let Some(hwnd) = *guard {
                                         unsafe {
