@@ -196,7 +196,7 @@ impl AudioEngine {
                              Err(e) => eprintln!("Resampling error: {}", e),
                          }
                     } else {
-                        thread::sleep(Duration::from_millis(1));
+                        thread::sleep(Duration::from_millis(5));
                     }
                 } else {
                      if in_cons.len() >= RNNOISE_FRAME_SIZE {
@@ -239,7 +239,7 @@ impl AudioEngine {
                              }
                          }
                     } else {
-                        thread::sleep(Duration::from_millis(1));
+                        thread::sleep(Duration::from_millis(5));
                     }
                 }
             }
