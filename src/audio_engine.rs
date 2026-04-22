@@ -103,6 +103,9 @@ impl AudioEngine {
             None
         )?;
 
+        // Set flag before spawning so the thread's while-loop doesn't exit immediately
+        *self.is_running.lock().unwrap() = true;
+
         // Processing Thread
         let is_running_clone = self.is_running.clone();
         let vad_threshold_clone = self.vad_threshold.clone();
@@ -247,9 +250,7 @@ impl AudioEngine {
 
         input_stream.play()?;
         output_stream.play()?;
-        
-        *self.is_running.lock().unwrap() = true;
-        
+
         self._input_stream = Some(input_stream);
         self._output_stream = Some(output_stream);
         self._processing_handle = Some(processing_handle);

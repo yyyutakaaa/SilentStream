@@ -11,7 +11,7 @@ use sysinfo::{System, Pid, ProcessRefreshKind};
 use tray_icon::{TrayIcon, TrayIconBuilder, TrayIconEvent, menu::{Menu, MenuItem, MenuEvent}};
 
 // Global tray icon storage to keep it alive
-static mut TRAY_ICON: Option<TrayIcon> = None;
+static TRAY_ICON: std::sync::OnceLock<tray_icon::TrayIcon> = std::sync::OnceLock::new();
 
 // Get config path
 fn get_config_path() -> Option<PathBuf> {
@@ -166,7 +166,7 @@ impl Default for SilentStreamApp {
                 .with_tooltip("SilentStream")
                 .with_icon(icon)
                 .build()
-                .map(|t| unsafe { TRAY_ICON = Some(t) });
+                .map(|t| { let _ = TRAY_ICON.set(t); });
         }
         
         // Tray Event Loop in a separate thread to ensure we catch events?
